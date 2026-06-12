@@ -6,7 +6,7 @@ use winapi;
 
 use crate::win::keycodes::*;
 use crate::{Key, KeyboardControllable, MouseButton, MouseControllable};
-use std::mem::*;
+use std::{mem::*, time::Duration};
 
 extern "system" {
     pub fn GetLastError() -> DWORD;
@@ -19,6 +19,11 @@ static mut LAYOUT: HKL = std::ptr::null_mut();
 
 /// The dwExtraInfo value in keyboard and mouse structure that used in SendInput()
 pub const ENIGO_INPUT_EXTRA_VALUE: ULONG_PTR = 100;
+// Empirical testing against Notepad showed corrupted input with 0ms, 5ms, and 10ms
+// delays, while 15ms and 20ms behaved correctly. Use 20ms as a conservative
+// default to avoid regressions while keeping latency low; revisit this if further
+// testing shows smaller values are reliable.
+const UNICODE_KEY_SEQUENCE_DELAY: Duration = Duration::from_millis(20);
 
 fn mouse_event(flags: u32, data: u32, dx: i32, dy: i32) -> DWORD {
     let mut u = INPUT_u::default();
@@ -219,7 +224,8 @@ impl KeyboardControllable for Enigo {
     fn key_sequence(&mut self, sequence: &str) {
         let mut buffer = [0; 2];
 
-        for c in sequence.chars() {
+        let mut chars = sequence.chars().peekable();
+        while let Some(c) = chars.next() {
             // Windows uses uft-16 encoding. We need to check
             // for variable length characters. As such some
             // characters can be 32 bit long and those are
@@ -236,6 +242,9 @@ impl KeyboardControllable for Enigo {
                 }
                 // do i need to produce a keyup?
                 // self.unicode_key_up(0);
+            }
+            if chars.peek().is_some() {
+                std::thread::sleep(UNICODE_KEY_SEQUENCE_DELAY);
             }
         }
     }
